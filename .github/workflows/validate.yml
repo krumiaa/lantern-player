@@ -1,0 +1,45 @@
+name: Validate Player Shell
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate JavaScript
+        run: node --check app.js
+
+      - name: Validate web manifest
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          json.loads(Path("site.webmanifest").read_text(encoding="utf-8"))
+          print("JSON_OK site.webmanifest")
+          PY
+
+      - name: Assert public-shell boundary
+        shell: bash
+        run: |
+          test -f index.html
+          test -f app.js
+          test -f site.webmanifest
+          test ! -d story
+          test ! -d narrator
+          test ! -d generator
+          if find . -type f -name '*.mp3' -o -name '*.wav' | grep -q .; then
+            echo "Audio asset unexpectedly present in public player repo."
+            exit 1
+          fi
+          if grep -R --exclude-dir=.git --exclude='validate.yml' -nE 'OPENAI_API_KEY|sk-[A-Za-z0-9_-]{20,}' .; then
+            echo "Potential secret marker found in public player repo."
+            exit 1
+          fi
+          echo "PUBLIC_BOUNDARY_OK"
