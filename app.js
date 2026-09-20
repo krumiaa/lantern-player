@@ -25,7 +25,7 @@ function token() {
 
 function headers(extra = {}) {
   const h = {
-    "Accept": "application/vnd.github+json",
+    Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
     ...extra,
   };
@@ -35,6 +35,10 @@ function headers(extra = {}) {
 
 function setStatus(message) {
   statusEl.textContent = message;
+}
+
+function encodeRepoPath(path) {
+  return path.split("/").map(encodeURIComponent).join("/");
 }
 
 function decodeBase64Utf8(value) {
@@ -57,7 +61,7 @@ async function fetchManifest() {
   });
 
   if (!response.ok) {
-    if (response.status === 401 || response.status === 403 || response.status === 404) {
+    if ([401, 403, 404].includes(response.status)) {
       throw new Error(
         "GitHub token could not read the private library. Check that it is restricted to lantern-protocol with Contents: Read."
       );
@@ -83,30 +87,30 @@ function chooseEpisode() {
   return unfinished || ready.at(-1) || null;
 }
 
-async function releaseAssetBlob(ep) {
-  const releaseResponse = await fetch(
-    `https://api.github.com/repos/${OWNER}/${REPO}/releases/tags/${encodeURIComponent(ep.release_tag)}`,
-    { headers: headers() }
-  );
-
-  if (!releaseResponse.ok) {
-    throw new Error(`Release lookup HTTP ${releaseResponse.status}`);
+async function repoAudioBlob(ep) {
+  if (!ep.audio_path) {
+    throw new Error(
+      "This episode predates the private playback cache. Refresh after the playback-cache backfill completes."
+    );
   }
 
-  const release = await releaseResponse.json();
-  const asset = release.assets.find((a) => a.name === ep.asset_name);
-  if (!asset) throw new Error("Audio asset not found in release.");
+  const path = encodeRepoPath(ep.audio_path);
+  const url =
+    `https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}?ref=main&ts=${Date.now()}`;
 
-  const assetResponse = await fetch(asset.url, {
-    headers: headers({ Accept: "application/octet-stream" }),
-    redirect: "follow",
+  const response = await fetch(url, {
+    headers: headers({ Accept: "application/vnd.github.raw+json" }),
+    cache: "no-store",
   });
 
-  if (!assetResponse.ok) {
-    throw new Error(`Audio download HTTP ${assetResponse.status}`);
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error("Private playback audio is not available yet.");
+    }
+    throw new Error(`Private audio HTTP ${response.status}`);
   }
 
-  return await assetResponse.blob();
+  return await response.blob();
 }
 
 async function loadEpisode(ep) {
@@ -117,7 +121,7 @@ async function loadEpisode(ep) {
   setStatus("Loading private audio…");
 
   if (audioObjectUrl) URL.revokeObjectURL(audioObjectUrl);
-  const blob = await releaseAssetBlob(ep);
+  const blob = await repoAudioBlob(ep);
   audioObjectUrl = URL.createObjectURL(blob);
   audio.src = audioObjectUrl;
 
